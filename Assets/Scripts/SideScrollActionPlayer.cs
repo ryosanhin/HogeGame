@@ -34,22 +34,33 @@ public class SideScrollActionPlayer : MonoBehaviour
 	int targetLayer;
 	[SerializeField] int[] targetLayerNum;
 	float maxDistance;
-	RaycastHit hit;
-	bool isGround=false;
+	RaycastHit hitGround;
+	public bool isGround=false;
 	//接地判定
+	
+	//横方向移動時の判定
+	[Header("画面の進行方向")]
+	[SerializeField] Vector3 rayDirectionForward;
+	Quaternion reverseVector;
+	//横方向移動時の判定
+	
+	//前の衝突判定
+	[Header("進行方向の障害物判定のRaycast")]
+	[SerializeField] Vector3 rayOriginForward;
+	[SerializeField] float rayLengthForward;
+	//前の衝突判定
 	
 	//坂道判定
 	[Header("坂道判定のRaycast")]
 	[SerializeField] Vector3 rayOriginHill;
-	[SerializeField] Vector3 rayDirectionHill;
 	[SerializeField] float rayLengthHill;
 	RaycastHit hitHill;
-	float isHill=0f; //0->坂なし 1->+xに坂
-	Vector3 hillVelocity=Vector3.right+Vector3.up;
+	public bool isHill=false;
 	//坂道判定
 	
 	void Start(){
 		Initialize();
+		reverseVector.eulerAngles=Vector3.up*180f;
 	}
 	
 	void Update(){
@@ -61,14 +72,7 @@ public class SideScrollActionPlayer : MonoBehaviour
 		my=transform;
 		additionalJumpTime=additionalJumpMaxTime;
 		maxDistance+=rayLength;
-		switch((int)rayType){
-			case 1:
-			maxDistance+=rayBoxSize.y*0.5f;
-			break;
-			case 2:
-			maxDistance+=raySphereRadius;
-			break;
-		}
+		
 		foreach(int i in targetLayerNum){
 			targetLayer+=1<<i;
 		}
@@ -89,63 +93,57 @@ public class SideScrollActionPlayer : MonoBehaviour
 			}
 		}
 		var tan=HillClimb(forward);
+		if(IsForward(forward)){
+			forward=0f;
+		}
 		return (Vector3.right+Vector3.up*tan)*forward*walkSpeed*deltaFrame;
+	}
+	
+	bool IsForward(float f){
+		if(f==0f){
+			return false;
+		}
+		var rayOriginPos=my.position+rayOriginForward;
+		var vct=rayDirectionForward;
+		if(f==-1f)vct=reverseVector*vct;
+		
+		return Physics.Raycast(rayOriginPos,vct,rayLengthForward,targetLayer);
 	}
 	
 	float HillClimb(float f){
 		var rayOriginPos=my.position+rayOriginHill;
-		isHill=0f;
 		var b=false;
-		var vct=rayDirectionHill;
-		vct.x=-vct.x;
+		var vct=rayDirectionForward;
 		
-		switch(f){
-			case 0f:
-			if(Physics.Raycast(rayOriginPos,rayDirectionHill,out hitHill,rayLengthHill,targetLayer)){
-				if(Mathf.Abs(hitHill.normal.y)!=0f){
-					isHill=1f;
-				}
-			}else{
-				if(Physics.Raycast(rayOriginPos,vct,out hitHill,rayLengthHill,targetLayer)){
-					isHill=-1f;
-				}
-			}
-			break;
-			
-			case 1f:
-			b=Physics.Raycast(rayOriginPos,rayDirectionHill,out hitHill,rayLengthHill,targetLayer);
-			if(b && Mathf.Abs(hitHill.normal.y)!=0f){
-				isHill=1f;
-			}else{
-				b=Physics.Raycast(rayOriginPos,vct,out hitHill,rayLengthHill,targetLayer);
-				if(b && Mathf.Abs(hitHill.normal.y)!=0f){
-					isHill=-1f;
-				}
-			}
-			if(b)return -hitHill.normal.x/hitHill.normal.y;
-			break;
-			
-			case -1f:
-			b=Physics.Raycast(rayOriginPos,vct,out hitHill,rayLengthHill,targetLayer);
-			if(b && Mathf.Abs(hitHill.normal.y)!=0f){
-				isHill=-1f;
-			}else{
-				b=Physics.Raycast(rayOriginPos,rayDirectionHill,out hitHill,rayLengthHill,targetLayer);
-				if(b && Mathf.Abs(hitHill.normal.y)!=0f){
-					isHill=1f;
-				}
-			}
-			if(b)return -hitHill.normal.x/hitHill.normal.y;
-			break;
+		bool ShootRay(){
+			return Physics.Raycast(rayOriginPos,vct,out hitHill,rayLengthHill,targetLayer);
 		}
 		
+		if(f==-1f)vct=reverseVector*vct;
+		
+		b=ShootRay();
+		
+		if(b && Mathf.Abs(hitHill.normal.y)!=0f){
+			isHill=true;
+		}else{
+			vct=reverseVector*vct;
+			b=ShootRay();
+			if(b && Mathf.Abs(hitHill.normal.y)!=0f){
+				isHill=true;
+			}else{
+				isHill=false;
+			}
+		}
+		
+		if(b)return -hitHill.normal.x/hitHill.normal.y;
 		return 0f;
 	}
 	
 	float Jump(){
 		isGround=IsGround();
-		if(isGround || isHill!=0f){
-			GroundCorrection(hit.distance);
+		
+		if(isGround || (!isGround && isHill)){
+			GroundCorrection();
 			y=0f;
 			isJump=false;
 			additionalJumpTime=additionalJumpMaxTime;
@@ -171,23 +169,12 @@ public class SideScrollActionPlayer : MonoBehaviour
 		return y*deltaFrame;
 	}
 	
-	void GroundCorrection(float distance){
+	void GroundCorrection(){
 		if(!isGround){
 			return;
 		}
-		Debug.Log(distance);
-		float f=maxDistance-distance;
-		if(f<=0f){
-			return;
-		}
-		switch((int)rayType){
-			case 1:
-			f-=rayBoxSize.y*0.5f;
-			break;
-			case 2:
-			f-=raySphereRadius;
-			break;
-		}
+		var f=maxDistance-hitGround.distance;
+		Debug.Log(f);
 		my.position+=Vector3.up*f;
 	}
 	
@@ -196,15 +183,15 @@ public class SideScrollActionPlayer : MonoBehaviour
 		var rayOriginPos=my.position+rayOrigin;
 		switch((int)rayType){
 			case 0:
-			isHit=Physics.Raycast(rayOriginPos,rayDirection,out hit,rayLength,targetLayer);
+			isHit=Physics.Raycast(rayOriginPos,rayDirection,out hitGround,rayLength,targetLayer);
 			break;
 			
 			case 1:
-			isHit=Physics.BoxCast(rayOriginPos,rayBoxSize*0.5f,rayDirection,out hit,Quaternion.identity,rayLength,targetLayer);
+			isHit=Physics.BoxCast(rayOriginPos,rayBoxSize*0.5f,rayDirection,out hitGround,Quaternion.identity,rayLength,targetLayer);
 			break;
 			
 			case 2:
-			isHit=Physics.SphereCast(rayOriginPos,raySphereRadius,rayDirection,out hit,rayLength,targetLayer);
+			isHit=Physics.SphereCast(rayOriginPos,raySphereRadius,rayDirection,out hitGround,rayLength,targetLayer);
 			break;
 		}
 		
@@ -236,8 +223,11 @@ public class SideScrollActionPlayer : MonoBehaviour
 		Gizmos.DrawLine(gizmoOrigin,gizmoOrigin+rayDirection*rayLength);
 		
 		gizmoOrigin=transform.position+rayOriginHill;
-		Gizmos.DrawLine(gizmoOrigin,gizmoOrigin+rayDirectionHill*rayLengthHill);
-		Gizmos.DrawLine(gizmoOrigin,gizmoOrigin-rayDirectionHill*rayLengthHill);
+		Gizmos.DrawLine(gizmoOrigin,gizmoOrigin+rayDirectionForward*rayLengthHill);
+		Gizmos.DrawLine(gizmoOrigin,gizmoOrigin-rayDirectionForward*rayLengthHill);
+		
+		gizmoOrigin=transform.position+rayOriginForward;
+		Gizmos.DrawLine(gizmoOrigin,gizmoOrigin+rayDirectionForward*rayLengthForward);
 	}
 	#endif
 }
